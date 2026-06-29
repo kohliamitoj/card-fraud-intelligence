@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await connect_db()
+    try:
+        await connect_db()
+    except Exception as e:
+        logger.error("MongoDB connection failed: %s — API will start without DB.", e)
     load_model()
     init_gemini()
     logger.info("Card Fraud Intelligence API started.")
