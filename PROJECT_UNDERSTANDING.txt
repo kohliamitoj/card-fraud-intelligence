@@ -1,0 +1,1144 @@
+================================================================================
+  CARD FRAUD INTELLIGENCE — COMPLETE PROJECT UNDERSTANDING
+================================================================================
+
+  A detailed breakdown of every component, decision, and data flow in
+  this project. Written for portfolio interviews, code walkthroughs,
+  and future reference.
+
+================================================================================
+  TABLE OF CONTENTS
+================================================================================
+
+  1.  What This Project Does (Plain English)
+  2.  Why It Matters (Business Context)
+  3.  High-Level Architecture
+  4.  Data Flow — End to End
+  5.  Machine Learning Layer (XGBoost + SHAP)
+      5a. Features Engineered
+      5b. How the Model is Trained
+      5c. How Class Imbalance is Handled
+      5d. How SHAP Works Here
+  6.  AI Layer (Google Gemini)
+      6a. Fraud Explanation
+      6b. Investigation Chat
+      6c. Case Summary
+  7.  Backend API (FastAPI)
+      7a. Authentication
+      7b. Transaction Scoring Endpoint
+      7c. Fraud Case Lifecycle
+      7d. Analytics Endpoints
+  8.  Database Design (MongoDB)
+  9.  Frontend (React)
+      9a. Live Demo Page
+      9b. Dashboard
+      9c. Cases Page
+      9d. Case Detail Page
+      9e. Analytics Page
+  10. Deployment Architecture
+  11. Key Design Decisions and Why
+  12. What Each File Does
+  13. Glossary of Banking Terms Used
+
+
+================================================================================
+  1. WHAT THIS PROJECT DOES (PLAIN ENGLISH)
+================================================================================
+
+  Imagine a bank receives thousands of card transactions every minute.
+  Among these, a small number (around 2%) are fraudulent — someone using
+  a stolen card, a criminal making an international wire transfer, or a
+  cardholder's account being taken over.
+
+  Traditionally, banks have two ways to catch fraud:
+    a) Rule-based systems: "flag any transaction over ₹50,000 abroad"
+       → Too many false alarms, misses clever fraud
+    b) Human review teams: analysts manually check suspicious transactions
+       → Too slow, too expensive, cannot scale
+
+  This project builds a third approach: an AI + ML powered pipeline that:
+
+    STEP 1: Receives a transaction the moment it happens
+    STEP 2: Scores it with a machine learning model (0% to 100% fraud probability)
+    STEP 3: Uses Google Gemini AI to write a plain-English explanation of WHY
+            the model flagged it (e.g., "This ₹95,000 transfer to a Nigerian
+            crypto exchange at 2am is 4x this cardholder's normal spend")
+    STEP 4: Creates a "fraud case" in a dashboard for the analyst team
+    STEP 5: Lets analysts investigate the case via an AI chat assistant,
+            add notes, update the case status, and confirm or dismiss the flag
+
+  The result: fraud analysts spend their time on the right cases, with AI
+  doing the heavy lifting of pattern recognition and explanation.
+
+
+================================================================================
+  2. WHY IT MATTERS (BUSINESS CONTEXT)
+================================================================================
+
+  SCALE OF THE PROBLEM
+  --------------------
+  - India's card fraud losses exceeded ₹2,000 crore in FY2024
+  - Globally, card fraud is a $33 billion annual problem
+  - Every card-issuing bank (HDFC, SBI, ICICI, Axis, Kotak) runs a fraud
+    operations team 24/7 to review flagged transactions
+
+  REGULATORY CONTEXT
+  ------------------
+  - RBI mandates banks to file a Suspicious Transaction Report (STR) under
+    PMLA (Prevention of Money Laundering Act) for confirmed fraud above ₹10 lakh
+  - Visa and Mastercard have chargeback reason codes that determine who bears
+    the financial loss (issuing bank, acquiring bank, or merchant)
+  - The AI chat assistant in this project specifically references these
+    regulatory thresholds when suggesting next steps
+
+  WHO USES THIS SYSTEM
+  --------------------
+  - Fraud Analyst: reviews flagged cases, adds investigation notes
+  - Senior Analyst: can confirm fraud, close cases, approve chargebacks
+  - Manager: monitors the analytics dashboard for portfolio-level risk
+
+  WHAT MAKES THIS DIFFERENT FROM A SIMPLE RULE ENGINE
+  ----------------------------------------------------
+  Rule engines flag based on single conditions ("amount > threshold").
+  This ML model combines 21 different signals simultaneously:
+    - How unusual is this amount compared to THIS cardholder's personal history?
+    - How many transactions did this card make in the last hour?
+    - Is this the first time this card has been used at this merchant?
+    - Did the card physically swipe in Mumbai 4 minutes after swiping in Delhi
+      (an impossible distance in that time)?
+  Combining signals this way catches fraud that rules would miss entirely.
+
+
+================================================================================
+  3. HIGH-LEVEL ARCHITECTURE
+================================================================================
+
+  The system has four layers that work together:
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                        FRONTEND (React)                         │
+  │    Login → Live Demo → Dashboard → Cases → Detail → Analytics  │
+  │                    Deployed on Vercel                           │
+  └──────────────────────────┬──────────────────────────────────────┘
+                             │ HTTPS API calls
+  ┌──────────────────────────▼──────────────────────────────────────┐
+  │                    BACKEND API (FastAPI)                        │
+  │         JWT Auth · Transaction Scoring · Case Management       │
+  │                    Deployed on Railway                          │
+  └──────┬───────────────────┬───────────────────┬─────────────────┘
+         │                   │                   │
+  ┌──────▼──────┐    ┌───────▼───────┐   ┌──────▼──────────────┐
+  │  ML Layer   │    │   AI Layer    │   │  Database           │
+  │  XGBoost    │    │  Google       │   │  MongoDB Atlas      │
+  │  SHAP       │    │  Gemini AI    │   │  (transactions,     │
+  │  (pkl files)│    │  (API calls)  │   │   cases, users,     │
+  └─────────────┘    └───────────────┘   │   audit_log)        │
+                                         └─────────────────────┘
+
+  KEY PRINCIPLE: The ML model and the AI model play different roles.
+    - XGBoost (ML): Fast, deterministic, scores thousands of transactions
+                    per second. Returns a number (0.0 to 1.0).
+    - Gemini (AI):  Slow, generative, explains ONE flagged case to a human.
+                    Returns a sentence. Called only when a transaction is flagged.
+
+
+================================================================================
+  4. DATA FLOW — END TO END
+================================================================================
+
+  Here is exactly what happens when a transaction is scored:
+
+  STEP 1 — API RECEIVES TRANSACTION
+    POST /api/v1/transactions/score
+    Payload includes: amount, cardholder_id, merchant_id, MCC, channel,
+    location, timestamp, card type
+
+  STEP 2 — FETCH CARDHOLDER HISTORY
+    The system fetches the last 30 days of this cardholder's transactions
+    from MongoDB. This is needed to compute behavioral features like:
+    "how unusual is this amount compared to their normal spending?"
+
+  STEP 3 — FEATURE ENGINEERING (app/core/feature_builder.py)
+    21 features are computed in real time from the transaction + history:
+    (Full list in Section 5a)
+
+  STEP 4 — ML SCORING (app/core/fraud_detector.py)
+    The 21 features are passed to the loaded XGBoost model.
+    Output: fraud_probability (e.g., 0.9312)
+    The SHAP explainer simultaneously computes which features drove
+    the score up or down (e.g., "is_high_risk_mcc: +0.21")
+
+  STEP 5 — THRESHOLD CHECK
+    If fraud_probability >= 0.5 (configurable): transaction is FLAGGED
+    Risk level assigned:
+      0.00 – 0.39 → LOW
+      0.40 – 0.64 → MEDIUM
+      0.65 – 0.84 → HIGH
+      0.85 – 1.00 → CRITICAL
+
+  STEP 6 — AI EXPLANATION (app/core/ai_assistant.py)
+    If flagged, the SHAP values + transaction details are sent to Gemini.
+    Gemini writes a 2-3 sentence explanation in plain English.
+    Example output:
+    "This ₹95,000 transfer to a crypto exchange in Lagos at 2am is 4x this
+    cardholder's average spend. The merchant category (crypto/wire transfer)
+    carries the highest fraud risk in our portfolio, and Nigeria is flagged
+    as a high-risk country. Combined with the unusual hour, this pattern
+    is consistent with account takeover fraud."
+
+  STEP 7 — FRAUD CASE CREATED
+    A new document is inserted into MongoDB "fraud_cases" collection with:
+    - Unique case_id (UUID)
+    - All transaction details
+    - fraud_probability, risk_level
+    - fraud_explanation (from Gemini)
+    - top_risk_factors (from SHAP)
+    - status: "OPEN"
+
+  STEP 8 — RESPONSE RETURNED TO CALLER
+    The API returns all of the above to whoever submitted the transaction
+    (the frontend Live Demo page, or another banking system calling this API).
+
+  STEP 9 — ANALYST INVESTIGATION (optional, human-driven)
+    An analyst opens the case in the dashboard.
+    They can:
+      a) Read the AI explanation
+      b) View the SHAP risk factor chart
+      c) Chat with the AI assistant ("should I block this card?")
+      d) Add investigation notes
+      e) Update status (CONFIRMED_FRAUD / FALSE_POSITIVE / CLOSED)
+    Every action is logged to the "audit_log" collection.
+
+
+================================================================================
+  5. MACHINE LEARNING LAYER (XGBoost + SHAP)
+================================================================================
+
+  5a. FEATURES ENGINEERED (21 total)
+  ------------------------------------
+  These 21 features are computed for every transaction, both during
+  training (offline) and during scoring (real time). It is critical that
+  both use identical logic — a bug here causes "training-serving skew"
+  which silently breaks model accuracy.
+
+  The training version is in: training/feature_engineering.py
+  The serving version is in:  app/core/feature_builder.py
+
+  AMOUNT FEATURES:
+    amount                    — Raw transaction amount in INR
+    amount_zscore             — (amount - cardholder_avg) / cardholder_std
+                                How many standard deviations above their
+                                normal spending is this transaction?
+                                zscore > 3 means extremely unusual.
+
+  TIME FEATURES:
+    hour_of_day               — 0 to 23. Fraud peaks 1am–5am.
+    day_of_week               — 0 (Mon) to 6 (Sun).
+    is_night                  — 1 if hour < 6 or hour >= 22, else 0.
+    is_weekend                — 1 if Saturday or Sunday, else 0.
+
+  VELOCITY FEATURES:
+    velocity_1h               — Number of transactions by this cardholder
+                                in the past 1 hour before this transaction.
+                                Fraudsters often make many small test
+                                transactions before a large one.
+    velocity_24h              — Same for past 24 hours.
+    velocity_7d               — Same for past 7 days.
+    amount_velocity_1h        — Total amount spent in the past 1 hour.
+    amount_velocity_24h       — Total amount spent in the past 24 hours.
+
+  TIME DELTA FEATURES:
+    time_since_last_txn_seconds — Seconds since the previous transaction
+                                  by this cardholder. Very short gaps
+                                  combined with high amounts = suspicious.
+
+  LOCATION FEATURES:
+    distance_from_last_txn_km — Haversine distance (km) between this
+                                 transaction's location and the previous
+                                 one. Computed from lat/lng.
+    impossible_travel          — 1 if speed between two consecutive
+                                  locations exceeds 900 km/h (faster than
+                                  any commercial flight). Catches cases
+                                  where a stolen card is used simultaneously
+                                  in two different cities.
+    is_international           — 1 if location_country != "IN".
+    is_new_country             — 1 if cardholder has never transacted in
+                                  this country before (in 30-day history).
+    is_high_risk_country       — 1 if country is in a hardcoded high-risk
+                                  list: NG (Nigeria), RO (Romania), BR
+                                  (Brazil), UA (Ukraine), PK (Pakistan).
+
+  MERCHANT FEATURES:
+    is_new_merchant            — 1 if cardholder has never transacted at
+                                  this merchant_id before.
+    is_high_risk_mcc           — 1 if the Merchant Category Code is in
+                                  the high-risk list:
+                                  7995 (Gambling), 6051 (Crypto/Wire),
+                                  4829 (Money Transfer), 5912 (Pharmacy),
+                                  5999 (Misc Retail), 6050, 7273.
+
+  CHANNEL FEATURES:
+    is_online                  — 1 if channel == "ONLINE" (card-not-present
+                                  transactions are higher risk).
+    is_atm                     — 1 if channel == "ATM".
+
+
+  5b. HOW THE MODEL IS TRAINED
+  -----------------------------
+  Algorithm: XGBoost (eXtreme Gradient Boosting)
+  Why XGBoost and not a neural network?
+    - Tabular data: XGBoost consistently outperforms neural nets on
+      structured/tabular data like transaction records.
+    - Speed: XGBoost scores a transaction in microseconds. A neural net
+      would be 10-100x slower with no accuracy gain here.
+    - Explainability: XGBoost integrates perfectly with SHAP, which is
+      critical for telling analysts WHY a transaction was flagged.
+    - Industry standard: Major banks (JPMorgan, HDFC, Paytm) use
+      gradient boosting for real-time fraud scoring.
+
+  Training procedure:
+    1. Load IEEE-CIS Fraud Detection dataset (590k real transactions)
+       OR generate synthetic data (50k transactions, 2% fraud rate)
+    2. Engineer all 21 features (offline, on full dataset)
+    3. Apply SMOTE (Synthetic Minority Over-sampling Technique) to handle
+       class imbalance — explained in 5c
+    4. Train XGBoost with 5-fold stratified cross-validation
+       (5 folds = model is tested on 5 different validation splits,
+        final score is averaged — more reliable than a single split)
+    5. Evaluate on AUC-ROC and Average Precision
+    6. Train final model on 100% of the data
+    7. Build SHAP TreeExplainer on the final model
+    8. Save model.pkl and shap_explainer.pkl
+
+  Key XGBoost hyperparameters used:
+    n_estimators=500       — 500 decision trees in the ensemble
+    max_depth=7            — Each tree can go 7 levels deep
+    learning_rate=0.05     — Small steps prevent overfitting
+    subsample=0.8          — Each tree uses 80% of training rows (random)
+    colsample_bytree=0.5   — Each tree uses 50% of features (random)
+    scale_pos_weight       — Automatically set to (n_legit / n_fraud)
+                             to give more weight to the rare fraud class
+
+
+  5c. HOW CLASS IMBALANCE IS HANDLED
+  ------------------------------------
+  The fundamental problem: only ~2% of transactions are fraud.
+  If the model predicts "not fraud" for everything, it is 98% accurate
+  but catches ZERO fraud cases. Accuracy is a useless metric here.
+
+  TWO techniques are used:
+
+  SMOTE (Synthetic Minority Over-sampling Technique):
+    Creates synthetic fraud examples by interpolating between real ones.
+    sampling_strategy=0.15 means: make fraud = 15% of the training data.
+    This gives the model more fraud examples to learn from.
+
+  scale_pos_weight (XGBoost parameter):
+    Makes the model penalize missing a fraud case much more than
+    falsely flagging a legitimate transaction.
+    Formula: scale_pos_weight = n_legitimate / n_fraud
+    Example: if 50,000 legit and 1,000 fraud → scale_pos_weight = 50
+
+  Correct evaluation metrics:
+    AUC-ROC: Area Under the ROC Curve. Measures how well the model
+             separates fraud from legitimate at all thresholds.
+             1.0 = perfect, 0.5 = random. Target: > 0.95.
+    Average Precision: Average of precision values at all recall thresholds.
+             Better than AUC-ROC when classes are highly imbalanced.
+             Target: > 0.80.
+
+
+  5d. HOW SHAP WORKS HERE
+  ------------------------
+  SHAP (SHapley Additive exPlanations) answers the question:
+  "For THIS specific transaction, how much did each feature contribute
+  to pushing the score up or down?"
+
+  Example SHAP output for a flagged transaction:
+    is_high_risk_mcc      : +0.21  (increased fraud probability by 0.21)
+    amount_zscore         : +0.18  (amount is 4x normal → very suspicious)
+    is_high_risk_country  : +0.16  (Nigeria in the high-risk list)
+    velocity_1h           : +0.12  (3 transactions in the last hour)
+    is_night              : +0.10  (2am transaction)
+    is_new_merchant       : +0.09  (first time at this merchant)
+    is_weekend            : -0.03  (slightly less suspicious on a weekend)
+    is_online             : +0.08  (card-not-present increases risk)
+
+  These SHAP values are:
+  1. Displayed as a bar chart in the Case Detail page (frontend)
+  2. Sent to Gemini AI to generate the human-readable explanation
+     (Gemini translates "+0.21 from is_high_risk_mcc" into
+      "the merchant category (crypto/wire transfer) carries the
+       highest fraud risk in our portfolio")
+
+  The SHAP TreeExplainer is pre-built on the training data and saved
+  as shap_explainer.pkl so it can be loaded at API startup without
+  retraining.
+
+
+================================================================================
+  6. AI LAYER (GOOGLE GEMINI)
+================================================================================
+
+  Gemini is used in three distinct ways. In all three cases, the LLM
+  is given structured context (transaction data, SHAP values, case history)
+  and asked to produce a specific type of output.
+
+  Model used: gemini-2.0-flash
+  Why Flash (not Pro/Ultra)? Speed and cost.
+    - Fraud explanation needs to happen in near real-time
+    - Flash gives good quality for structured explanation tasks
+    - Pro would be overkill and 5-10x more expensive
+
+  6a. FRAUD EXPLANATION
+  ----------------------
+  Called: When a transaction is flagged (fraud_probability >= threshold)
+  Input to Gemini:
+    - Transaction details (amount, merchant, MCC, channel, country, time)
+    - fraud_probability (e.g., "93.1%")
+    - Top SHAP risk factors with impact values and directions
+  Output: 2-3 sentence professional explanation
+  Tone instruction: "Write as a senior fraud analyst. Use plain language.
+                     Do not mention SHAP or ML terms."
+
+  Example:
+    Input SHAP factors:
+      is_high_risk_country: +0.24
+      is_high_risk_mcc:     +0.21
+      amount_zscore:        +0.18
+      is_night:             +0.12
+
+    Output Gemini explanation:
+      "This transaction is highly suspicious: a ₹95,000 transfer to a
+      crypto exchange in Lagos at 2am is far outside this cardholder's
+      typical spending pattern. The merchant category (crypto/wire
+      transfer) and the destination country (Nigeria) are both associated
+      with elevated fraud risk in our portfolio. This combination is
+      consistent with an account takeover scenario."
+
+  Fallback: If GEMINI_API_KEY is not set or the API call fails, the
+  system generates a simpler template-based explanation from the SHAP
+  values directly. The API never fails because of a missing Gemini key.
+
+
+  6b. INVESTIGATION CHAT
+  -----------------------
+  Called: When an analyst sends a message in the Case Detail page chat
+  Input to Gemini:
+    - Full case context (amount, merchant, MCC, fraud probability,
+      risk level, current status, all analyst notes so far)
+    - Last 6 messages of conversation history (sliding window)
+    - Analyst's current question
+  Output:
+    - Answer to the question with banking domain context
+    - List of suggested next actions (e.g., "Block card", "File STR")
+
+  Gemini is instructed to reference real banking procedures:
+    - CBR (Chargeback Request) if merchant dispute is applicable
+    - STR filing if amount exceeds ₹10 lakhs (PMLA requirement)
+    - Card blocking procedures
+    - Cardholder notification steps
+
+  Example chat exchange:
+    Analyst: "Should I block the card immediately?"
+    Gemini:  "Yes, given the 93% fraud probability and CRITICAL risk
+              level, immediate card blocking is recommended. Issue a
+              replacement card to the cardholder. If the cardholder
+              confirms they did not authorize this transaction, initiate
+              a chargeback request. Since the amount exceeds ₹10 lakhs,
+              a Suspicious Transaction Report must be filed with FIU-IND
+              within 7 working days under PMLA."
+
+  Suggested actions (auto-generated based on risk level):
+    CRITICAL (>85%): Block card · Initiate CBR · File STR · Notify cardholder
+    HIGH (65-85%):   Temporary hold · Review 30-day history
+
+
+  6c. CASE SUMMARY
+  -----------------
+  Called: When analyst opens Case Detail page (generated once, cached)
+  Input to Gemini:
+    - All case fields
+    - Up to 3 similar historical cases (found by MongoDB query matching
+      on MCC, cardholder_id, or risk_level)
+  Output:
+    - Executive summary (3-4 sentences covering what happened,
+      why suspicious, and recommended action)
+    - Bullet-point list of red flags
+    - Single recommended action sentence
+
+  Once generated, the summary is stored in the fraud_cases document
+  (ai_summary field) so subsequent visits don't re-call Gemini.
+
+
+================================================================================
+  7. BACKEND API (FastAPI)
+================================================================================
+
+  Framework: FastAPI (Python)
+  Why FastAPI?
+    - Async by design: handles many concurrent transaction scoring
+      requests without blocking
+    - Auto-generates Swagger UI at /docs (great for portfolio demos)
+    - Pydantic v2 validation: wrong input format is caught automatically
+      before it reaches business logic
+    - Motor (async MongoDB driver) pairs naturally with FastAPI's async
+
+  Port: 8000 (local) / Railway-assigned PORT (production)
+
+  7a. AUTHENTICATION
+  -------------------
+  Mechanism: JWT (JSON Web Tokens) with HMAC-SHA256 signing
+  Library: python-jose
+
+  Flow:
+    1. POST /api/v1/auth/login with {username, password}
+    2. Server verifies password against bcrypt hash in MongoDB
+    3. Server issues a JWT containing {sub: username, role: role, exp: expiry}
+    4. Client stores JWT in localStorage
+    5. All subsequent requests include: Authorization: Bearer <token>
+    6. FastAPI dependency (require_auth) decodes and validates the token
+
+  Password storage: bcrypt hash (passlib) — never stored in plain text
+
+  Roles:
+    analyst        — can score transactions, view cases, add notes
+    senior_analyst — can also update case status
+    manager        — full access including analytics
+
+  Token expiry: 60 minutes (configurable in .env)
+
+  7b. TRANSACTION SCORING ENDPOINT
+  ----------------------------------
+  POST /api/v1/transactions/score
+
+  This is the most important endpoint. Here is exactly what it does:
+
+    1. Validates the request body with Pydantic (all required fields,
+       correct types, valid enum values for card_type/channel)
+    2. Calls _fetch_cardholder_history(): queries MongoDB for last 30
+       days of this cardholder's transactions (max 200 records)
+    3. Calls _compute_cardholder_stats(): MongoDB aggregation to get
+       avg_amount and std_amount for amount z-score calculation
+    4. Calls build_features(): computes all 21 features in real time
+    5. Calls score_transaction(): passes features to XGBoost model,
+       gets fraud_probability and SHAP values
+    6. Calls risk_level_from_prob(): maps probability to LOW/MEDIUM/HIGH/CRITICAL
+    7. If is_flagged: calls generate_fraud_explanation() (Gemini API)
+       and creates a fraud case document in MongoDB
+    8. Stores the transaction in MongoDB "transactions" collection
+    9. Returns TransactionScoreResponse with all results
+
+  Response time target: < 200ms
+  Bottleneck: MongoDB history query (solved by indexing cardholder_id + timestamp)
+
+  7c. FRAUD CASE LIFECYCLE
+  -------------------------
+  A fraud case goes through these statuses:
+
+    OPEN               — Just created when transaction flagged
+        ↓
+    UNDER_INVESTIGATION — Analyst has started reviewing
+        ↓
+    CONFIRMED_FRAUD    — Analyst confirmed it is real fraud
+        or
+    FALSE_POSITIVE     — Analyst determined it was a legitimate transaction
+        ↓
+    CLOSED             — Case resolved and documented
+
+  Every status change is logged to the audit_log collection with:
+    - who made the change (analyst username)
+    - what the previous status was
+    - the reason given
+    - timestamp
+
+  Endpoints for case management:
+    GET    /api/v1/cases/               — list all cases (filterable)
+    GET    /api/v1/cases/{id}           — full case detail
+    PATCH  /api/v1/cases/{id}/status   — update status
+    POST   /api/v1/cases/{id}/notes    — add investigation note
+    PATCH  /api/v1/cases/{id}/assign   — assign to an analyst
+
+  7d. ANALYTICS ENDPOINTS
+  ------------------------
+  GET /api/v1/analytics/dashboard
+    Returns aggregate KPIs using MongoDB $group aggregations:
+    - total_transactions_scored
+    - total_flagged, flag_rate_percent
+    - total_cases, open_cases, critical_cases
+    - confirmed_fraud_cases, false_positive_cases
+    - detection_rate_percent, false_positive_rate_percent
+    - total_confirmed_fraud_amount_inr
+
+  GET /api/v1/analytics/trends?days=30
+    Daily breakdown of cases for the past N days.
+    Uses MongoDB $dateToString and $group to aggregate by date.
+
+  GET /api/v1/analytics/by-merchant-category
+    Top 15 MCCs by flagged transaction count.
+    Shows which merchant categories generate most fraud.
+
+  GET /api/v1/analytics/by-channel
+    Breakdown by POS / ONLINE / ATM / CONTACTLESS.
+    Shows which channel has highest fraud rate.
+
+
+================================================================================
+  8. DATABASE DESIGN (MongoDB)
+================================================================================
+
+  Why MongoDB instead of PostgreSQL?
+    - Transaction records are semi-structured (different transactions
+      may have different optional fields like latitude, ip_address)
+    - Case documents embed notes as an array — no need for a separate
+      notes table with joins
+    - Fast writes: MongoDB is optimized for high-throughput inserts,
+      important for real-time transaction logging
+    - Flexible schema: adding new features to the transaction document
+      doesn't require an ALTER TABLE migration
+
+  Database: card_fraud_intelligence
+
+  COLLECTION 1: transactions
+  --------------------------
+  One document per transaction scored. Stores everything:
+    {
+      transaction_id, cardholder_id, card_last4, card_type,
+      amount, currency,
+      merchant_id, merchant_name, merchant_category_code,
+      channel, location_city, location_country, latitude, longitude,
+      ip_address, device_fingerprint, timestamp,
+      fraud_probability, is_flagged, risk_level,
+      fraud_explanation, top_risk_factors,
+      case_id (if flagged, links to fraud_cases),
+      created_at
+    }
+  Indexes recommended:
+    - (cardholder_id, timestamp): for fast history lookup during scoring
+    - (is_flagged): for filtering flagged transactions
+    - (transaction_id): unique index for deduplication
+
+  COLLECTION 2: fraud_cases
+  -------------------------
+  One document per flagged transaction case:
+    {
+      case_id (UUID),
+      transaction_id (links to transactions),
+      cardholder_id, amount, currency,
+      merchant_name, merchant_category_code,
+      fraud_probability, risk_level,
+      fraud_explanation (from Gemini),
+      top_risk_factors (SHAP values list),
+      status (OPEN/UNDER_INVESTIGATION/CONFIRMED_FRAUD/FALSE_POSITIVE/CLOSED),
+      assigned_to (analyst username),
+      notes: [                        ← embedded array
+        { note_id, analyst, content, created_at },
+        ...
+      ],
+      ai_summary (cached Gemini summary),
+      created_at, updated_at
+    }
+
+  COLLECTION 3: users
+  -------------------
+  One document per analyst account:
+    {
+      username, email, full_name, role,
+      hashed_password (bcrypt),
+      is_active, created_at
+    }
+
+  COLLECTION 4: audit_log
+  -----------------------
+  Immutable log of all analyst actions:
+    {
+      event (case_status_updated / investigation_query / ...),
+      case_id, analyst,
+      from_status, to_status, reason,
+      question (for chat events),
+      timestamp
+    }
+  This collection is append-only — nothing is ever updated or deleted.
+  Important for compliance and dispute resolution.
+
+
+================================================================================
+  9. FRONTEND (REACT)
+================================================================================
+
+  Framework:    React 18 with Vite (build tool)
+  Styling:      Tailwind CSS (utility-first CSS)
+  Routing:      React Router v6
+  HTTP client:  Axios (with JWT interceptor)
+  Charts:       Recharts
+  Icons:        Lucide React
+  State:        React Context (auth only), local useState (page data)
+
+  Why Vite over Create React App?
+    - 10-50x faster development server startup
+    - Native ES modules during development (no bundling needed)
+    - Industry standard in 2024+
+
+  Color palette (light fintech theme):
+    Background:   slate-50  (#f8fafc)
+    Cards:        white     (#ffffff)
+    Primary:      blue-600  (#2563eb)
+    Text:         slate-900 (#0f172a)
+    Border:       slate-200 (#e2e8f0)
+    Danger/Fraud: red-600   (#dc2626)
+    Warning:      amber-600 (#d97706)
+    Safe:         green-600 (#16a34a)
+
+  9a. LIVE DEMO PAGE (/demo)
+  ---------------------------
+  The portfolio showpiece. Two columns:
+
+  LEFT — Transaction form:
+    Pre-filled with a suspicious example (₹95,000 to Nigerian crypto
+    exchange at 2am). "Load Suspicious" and "Load Legitimate" buttons
+    let visitors instantly switch between scenarios.
+    Fields: amount, cardholder_id, merchant, MCC, channel, card type,
+            city, country.
+    Submit: "Score Transaction" button.
+
+  RIGHT — Results panel (appears after scoring):
+    1. FraudMeter: SVG semicircular gauge that animates from 0% to the
+       fraud score over 1.3 seconds using cubic-ease-out easing.
+       Color changes: green → amber → orange → red as score increases.
+    2. Risk badge: LOW / MEDIUM / HIGH / CRITICAL with color coding.
+    3. Flagged/Clear badge.
+    4. AI Explanation card: the Gemini-generated paragraph.
+    5. ShapChart: horizontal bars for each risk factor, red=increases
+       risk, green=decreases risk, length proportional to impact.
+    6. "View Investigation Case" card with link to CaseDetail.
+
+  Technical note on the gauge:
+    SVG semicircle path: M 30 110 A 80 80 0 0 0 190 110
+    Animation: strokeDasharray transitions from "0 251" to "251 251"
+    (251 = π × radius = circumference of the semicircle)
+    CSS transition: "stroke-dasharray 1.2s cubic-bezier(0.4, 0, 0.2, 1)"
+
+  9b. DASHBOARD (/dashboard)
+  ---------------------------
+  Loads data from 3 API calls in parallel (useEffect + Promise.all):
+    - /api/v1/analytics/dashboard → KPI numbers
+    - /api/v1/analytics/trends?days=14 → chart data
+    - /api/v1/cases/?limit=5 → recent cases
+
+  Four KPI cards at top:
+    Total Scored | Total Cases | Confirmed Fraud | False Positives
+
+  Two charts side by side:
+    - 14-day trend: Recharts LineChart (blue=total, red=confirmed fraud)
+    - Fraud exposure: Custom horizontal progress bars for key metrics
+
+  Recent cases table at bottom with click-to-navigate to case detail.
+
+  Skeleton loading: while data loads, table rows show animated gray
+  placeholder blocks (the "pulse" animation in Tailwind).
+
+  9c. CASES PAGE (/cases)
+  -------------------------
+  Filterable, paginated table of all fraud cases.
+
+  Filters: status dropdown + risk level dropdown + Clear button.
+  Each filter change re-fetches the API with the new query params.
+
+  Table columns: Case ID | Cardholder | Amount | Merchant | Risk | Status | Date
+  Click any row → navigate to CaseDetail.
+
+  Pagination: 20 records per page. "Previous" / "Next" buttons with
+  skip/limit MongoDB-style pagination.
+
+  Risk badges: color-coded chips with a colored dot.
+  Status badges: OPEN (blue), INVESTIGATING (purple), CONFIRMED (red),
+                 FALSE POSITIVE (green), CLOSED (gray).
+
+  9d. CASE DETAIL PAGE (/cases/:id)
+  ----------------------------------
+  The investigation workspace. Loads:
+    - Case data: GET /api/v1/cases/{id}
+    - AI summary: GET /api/v1/investigation/cases/{id}/summary
+  (both in parallel on mount)
+
+  Status dropdown in the header: analyst can change status directly.
+  Updates immediately via PATCH /api/v1/cases/{id}/status.
+
+  LEFT COLUMN (3/5 width):
+    - FraudMeter: same animated gauge as Demo page
+    - AI Explanation: the Gemini text from when the transaction was scored
+    - SHAP risk factor chart: horizontal bars with feature names
+    - AI Executive Summary: Gemini-generated summary, red flags list,
+      and recommended action (only shows once the summary is loaded)
+
+  RIGHT COLUMN (2/5 width):
+    - AI Investigation Chat: a chat interface where analyst types questions
+      The conversation history is maintained in local state and sent with
+      each message so Gemini has context.
+      Messages are displayed in chat bubbles (blue = analyst, gray = AI).
+      "Thinking…" placeholder shown while API responds.
+    - Investigation Notes: scrollable list of analyst notes.
+      Add note form at the bottom.
+      After adding, refetches the case to show the new note immediately.
+
+  9e. ANALYTICS PAGE (/analytics)
+  ---------------------------------
+  4 KPI cards at top (same data as Dashboard but focused on risk).
+
+  Charts:
+    1. 30-day trend: LineChart (daily cases + confirmed fraud)
+    2. Fraud by Channel: Donut/Pie chart (Recharts PieChart with innerRadius)
+    3. Top Fraud MCCs: Horizontal BarChart showing which merchant
+       categories generate the most flagged transactions
+
+  Empty state: "No data yet" message shown when collections are empty
+  (important for a fresh deployment before any transactions are scored).
+
+
+================================================================================
+  10. DEPLOYMENT ARCHITECTURE
+================================================================================
+
+  PRODUCTION STACK (all free tiers):
+
+  ┌────────────────────────────────────────────────────────┐
+  │  GitHub Repository                                     │
+  │  card-fraud-intelligence/                              │
+  │    ├── app/          (FastAPI backend)                 │
+  │    ├── frontend/     (React frontend)                  │
+  │    ├── training/     (ML training scripts)             │
+  │    └── Dockerfile    (for Railway)                     │
+  └──────────────┬───────────────────┬─────────────────────┘
+                 │ auto-deploy       │ auto-deploy
+  ┌──────────────▼────────┐  ┌───────▼──────────────────┐
+  │  Railway              │  │  Vercel                  │
+  │  (Backend)            │  │  (Frontend)              │
+  │                       │  │                          │
+  │  Runs FastAPI in      │  │  Builds React with Vite  │
+  │  Docker container     │  │  Serves as CDN-cached    │
+  │  Auto-scales          │  │  static files globally   │
+  │  HTTPS included       │  │  HTTPS included          │
+  │                       │  │                          │
+  │  URL:                 │  │  URL:                    │
+  │  your-app.railway.app │  │  your-app.vercel.app     │
+  └──────────┬────────────┘  └──────────────────────────┘
+             │
+  ┌──────────▼────────────────────┐
+  │  MongoDB Atlas (M0 Free)      │
+  │  Cloud-hosted MongoDB         │
+  │  512MB storage                │
+  │  Connection: Atlas URI        │
+  └───────────────────────────────┘
+             │
+  ┌──────────▼────────────────────┐
+  │  Google Gemini API            │
+  │  gemini-2.0-flash             │
+  │  Called per fraud explanation │
+  └───────────────────────────────┘
+
+  HOW VERCEL HANDLES ROUTING:
+    React Router uses client-side routing. If someone visits
+    yourdomain.vercel.app/cases/abc123 directly, Vercel needs to serve
+    index.html (not a 404). The vercel.json file handles this:
+    { "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
+
+  HOW RAILWAY GETS THE API KEY / SECRETS:
+    Never committed to Git. Set in Railway dashboard as Environment
+    Variables. Railway injects them as process environment variables
+    at container startup. FastAPI reads them via pydantic-settings
+    from the .env file or environment.
+
+  HOW THE MODEL FILES ARE HANDLED:
+    .pkl files are large (50-200MB) and are in .gitignore.
+    For production, options are:
+    a) Mount them via Railway's persistent volume storage
+    b) Download from Google Cloud Storage at container startup
+    c) Use demo mode (API works without model, returns realistic scores)
+    The API gracefully handles a missing model with a warning log
+    and falls back to demo scoring.
+
+  AUTO-DEPLOY FLOW:
+    Developer pushes to GitHub main branch
+      → Railway detects change → rebuilds Docker image → redeploys (3-5 min)
+      → Vercel detects change → rebuilds React bundle → redeploys (1-2 min)
+    Zero-downtime: Railway keeps old container running until new one is ready
+
+
+================================================================================
+  11. KEY DESIGN DECISIONS AND WHY
+================================================================================
+
+  DECISION 1: MongoDB over PostgreSQL
+  Reason: Fraud cases have an embedded notes array that can grow
+  dynamically. In SQL this would be a separate table requiring JOINs.
+  In MongoDB it's a simple array in the document. Also, the flexible
+  schema makes it easy to add new features to transactions without
+  migrations.
+
+  DECISION 2: Sync ML scoring, async Gemini
+  The XGBoost model scores in < 1ms. The Gemini API call takes 1-3
+  seconds. Both are awaited in the transaction scoring endpoint. This
+  means the scoring endpoint takes 1-3 seconds when a transaction is
+  flagged. For a portfolio project this is acceptable. In production,
+  the Gemini call would be moved to a background task (FastAPI
+  BackgroundTasks) so the API returns the score instantly and the
+  explanation is generated asynchronously.
+
+  DECISION 3: SHAP over other explainability methods
+  LIME (Local Interpretable Model-agnostic Explanations) is an alternative
+  but is slower and less consistent for tree models. SHAP TreeExplainer
+  is an exact algorithm specifically for tree ensembles — computationally
+  efficient and mathematically guaranteed to be additive (all SHAP values
+  sum to the model output).
+
+  DECISION 4: 5-fold cross validation over train/test split
+  A single 80/20 split can be misleading with only 1,000 fraud samples.
+  5-fold CV trains and evaluates 5 times on different data splits, giving
+  a reliable estimate of how the model will perform on unseen data.
+
+  DECISION 5: React Context over Redux for state management
+  The only truly global state is auth (user + token). Everything else
+  is page-local. Using Redux for this would be massive over-engineering.
+  React Context + localStorage is sufficient and simpler.
+
+  DECISION 6: Motor (async MongoDB) over PyMongo (sync)
+  FastAPI is async. If we used sync PyMongo, every database call would
+  block the async event loop, defeating the purpose of FastAPI's
+  concurrency. Motor is the official async MongoDB driver.
+
+  DECISION 7: Tailwind CSS over styled-components or CSS modules
+  Utility-first CSS means the design stays consistent without writing
+  custom CSS. Custom CSS is only added for the gauge animation and
+  fade-in effect in index.css. Tailwind's purge removes unused classes
+  so the production bundle is small.
+
+
+================================================================================
+  12. WHAT EACH FILE DOES
+================================================================================
+
+  BACKEND FILES
+  -------------
+  config/settings.py
+    Reads all environment variables (.env file or system env) using
+    pydantic-settings. Every other module imports from here.
+    Never hardcodes secrets.
+
+  app/db/mongodb.py
+    Manages the MongoDB connection lifecycle.
+    connect_db(): called at API startup (lifespan event)
+    close_db(): called at API shutdown
+    get_collection(): returns a collection by name for use in services
+
+  app/schemas/
+    Pydantic models for request/response validation.
+    transaction.py: TransactionRequest (what comes IN), TransactionScoreResponse (what goes OUT)
+    case.py: CaseResponse, CaseStatusUpdate, AddNoteRequest, InvestigationNote
+    user.py: UserCreate, UserInDB, TokenResponse, LoginRequest
+    investigation.py: ChatMessage, InvestigationChatRequest, CaseSummaryResponse
+
+  app/core/feature_builder.py
+    The real-time feature engineering. Builds the 21 features from a
+    transaction dict + history list. Must stay in sync with
+    training/feature_engineering.py.
+    Also contains FEATURE_NAMES list (used to ensure feature order matches
+    what the model was trained on).
+
+  app/core/fraud_detector.py
+    Loads model and SHAP explainer from .pkl files at startup.
+    score_transaction(): takes 21 features, returns (probability, shap_values)
+    risk_level_from_prob(): maps float to LOW/MEDIUM/HIGH/CRITICAL string
+    Falls back to demo mode if model files are missing.
+
+  app/core/ai_assistant.py
+    All Gemini API calls. Three functions:
+    generate_fraud_explanation(): takes SHAP + txn → 2-3 sentence explanation
+    answer_investigation_query(): takes case + question → answer + suggested actions
+    generate_case_summary(): takes case + similar cases → executive summary
+
+  app/services/transaction_service.py
+    Orchestrates the full scoring flow. Calls feature_builder, fraud_detector,
+    ai_assistant in sequence. Stores results to MongoDB.
+
+  app/services/case_service.py
+    CRUD for fraud cases. Status updates, note additions, assignments.
+    All writes also create audit_log entries.
+
+  app/services/investigation_service.py
+    Chat and summary logic. Finds similar cases via MongoDB query.
+    Caches AI summaries in the case document.
+
+  app/services/auth_service.py
+    User registration, login, password hashing (bcrypt), JWT token
+    creation and decoding.
+
+  app/api/v1/endpoints/
+    Thin route handlers. Validate input via Pydantic, call services,
+    return responses. No business logic here.
+
+  app/dependencies.py
+    FastAPI dependency injection functions.
+    require_auth: extracts and validates JWT from Authorization header
+    require_senior: checks role is senior_analyst or manager
+
+  app/main.py
+    FastAPI application setup. Lifespan function handles startup
+    (connect DB, load model, init Gemini) and shutdown (close DB).
+    CORS middleware allows the React frontend to call the API.
+
+  TRAINING FILES
+  --------------
+  training/generate_synthetic_data.py
+    Creates 50,000 realistic synthetic transactions with 2% fraud rate.
+    Generates 4 fraud pattern types: card-not-present, card-present,
+    account-takeover, velocity. Saves to data/transactions.csv.
+
+  training/feature_engineering.py
+    Offline version of feature_builder.py for batch processing.
+    Uses pandas for vectorized operations (much faster than row-by-row).
+    Must stay in sync with app/core/feature_builder.py.
+
+  training/train.py
+    Training pipeline for synthetic data.
+    SMOTE → XGBoost 5-fold CV → final model → SHAP → save .pkl files.
+
+  training/train_ieee.py
+    Training pipeline for the real IEEE-CIS Kaggle dataset.
+    Handles the different column names (TransactionAmt, isFraud, etc.)
+    Uses scale_pos_weight instead of SMOTE (better for large datasets).
+    Selects 200+ of the most informative V-features automatically.
+
+  training/evaluate.py
+    Generates 4 evaluation plots: ROC curve, PR curve, score distribution,
+    feature importance. Saves to models/evaluation/.
+
+  FRONTEND FILES
+  --------------
+  frontend/src/api/client.js
+    Axios instance pre-configured with base URL and JWT interceptor.
+    Automatically adds Authorization header to every request.
+    On 401 response: clears localStorage and redirects to /login.
+
+  frontend/src/context/AuthContext.jsx
+    Global auth state. Reads user from localStorage on page load
+    (so you stay logged in after refresh). login() and logout() functions.
+
+  frontend/src/components/FraudMeter.jsx
+    SVG semicircular gauge. Animates score with requestAnimationFrame
+    cubic easing. Color interpolates from green to red based on score.
+
+  frontend/src/components/ShapChart.jsx
+    Horizontal bar chart for SHAP risk factors. Red bars = increases risk,
+    green bars = decreases risk. Bar width proportional to impact magnitude.
+
+  frontend/src/components/RiskBadge.jsx / StatusBadge.jsx
+    Colored pill badges. Pure presentational components.
+
+  frontend/src/components/Sidebar.jsx
+    Navigation sidebar with logo, nav links (using NavLink for active state),
+    user info, and logout button.
+
+  frontend/src/pages/Demo.jsx
+    The main portfolio showcase. Transaction form + animated results.
+    Pre-loads suspicious example data. Has "Load Suspicious" and
+    "Load Legitimate" preset buttons.
+
+  frontend/src/pages/CaseDetail.jsx
+    The most complex page. Manages: case data, AI summary, chat history,
+    notes, and status. Two-column layout with analysis on left and
+    investigation tools on right.
+
+  DEPLOYMENT FILES
+  ----------------
+  Dockerfile
+    Multi-stage Docker build. Python 3.11-slim base image.
+    Installs requirements, copies code, starts uvicorn.
+
+  railway.toml
+    Tells Railway to use the Dockerfile and sets the start command
+    with Railway's PORT environment variable.
+
+  frontend/vercel.json
+    Rewrites all routes to index.html for React Router to work.
+
+  .gitignore
+    Excludes: .env (secrets), *.pkl (large model files), data/*.csv
+    (large datasets), __pycache__, node_modules, .venv.
+
+
+================================================================================
+  13. GLOSSARY OF BANKING TERMS USED
+================================================================================
+
+  MCC (Merchant Category Code)
+    A 4-digit code assigned to every merchant by the card networks
+    (Visa, Mastercard). Examples:
+      5411 = Grocery Stores
+      5812 = Eating Places and Restaurants
+      7995 = Gambling / Betting
+      6051 = Non-Financial Institutions — Foreign Currency / Money Orders
+             (this is what crypto exchanges use)
+      4829 = Money Transfers
+    Fraudsters favour high-risk MCCs because they move money quickly
+    and are harder to reverse.
+
+  Card-Not-Present (CNP) Fraud
+    Fraud where the physical card is not used. Online transactions are
+    CNP. Higher risk because the merchant cannot verify the cardholder
+    is physically present. The ONLINE channel in this project maps to CNP.
+
+  Chargeback (CBR)
+    The process of reversing a fraudulent charge. The cardholder disputes
+    the transaction with their bank (issuer). The issuer claims the money
+    back from the merchant's bank (acquirer). Visa/Mastercard reason codes
+    determine who bears the loss.
+
+  STR (Suspicious Transaction Report)
+    A mandatory report filed with FIU-IND (Financial Intelligence Unit
+    — India) under PMLA (Prevention of Money Laundering Act, 2002).
+    Required for: confirmed fraud above ₹10 lakhs, or any transaction
+    suggesting money laundering. Must be filed within 7 working days.
+
+  AUC-ROC (Area Under the Receiver Operating Characteristic Curve)
+    A measure of a fraud model's ability to distinguish fraud from
+    legitimate transactions. 1.0 = perfect. 0.5 = random (useless).
+    Typical production fraud models: 0.92 - 0.98.
+
+  False Positive
+    A legitimate transaction incorrectly flagged as fraud.
+    Too many false positives: good customers are frustrated when their
+    cards are declined. Banks aim to keep false positive rate < 5%.
+
+  False Negative
+    A fraudulent transaction that was NOT flagged (missed fraud).
+    Each false negative = direct financial loss to the bank or cardholder.
+
+  PMLA
+    Prevention of Money Laundering Act, 2002. Indian law requiring banks
+    to file STRs and maintain transaction records for 5 years.
+
+  FIU-IND
+    Financial Intelligence Unit — India. The government body that
+    receives STRs from banks and investigates financial crimes.
+
+  Velocity (in fraud context)
+    The number of transactions made by a card in a short time window.
+    High velocity (e.g., 5 transactions in 10 minutes) is a major
+    fraud signal — fraudsters test cards with small amounts before
+    making large unauthorized purchases.
+
+  Skimming
+    Physical theft of card data by placing a device on ATMs or POS
+    terminals. The stolen data is used to make fraudulent card-present
+    transactions, often in a different city or country.
+
+  Account Takeover (ATO)
+    A fraudster gains access to a legitimate cardholder's online
+    account (via phishing or credential stuffing) and makes purchases.
+    Patterns: login from new device/IP, followed by new payee added,
+    followed by large transfer. The "account_takeover" fraud type in
+    the synthetic data generator models this pattern.
+
+================================================================================
+  END OF PROJECT UNDERSTANDING DOCUMENT
+================================================================================

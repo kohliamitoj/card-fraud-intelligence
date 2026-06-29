@@ -1,0 +1,248 @@
+================================================================================
+  CARD FRAUD INTELLIGENCE — QUICKSTART GUIDE
+================================================================================
+
+PREREQUISITES
+-------------
+Install these before anything else:
+
+  Tool       Version   Install
+  -------    -------   ---------------------------
+  Python     3.10+     python.org
+  MongoDB    7+        brew install mongodb-community
+  Git        any       pre-installed on Mac
+
+
+--------------------------------------------------------------------------------
+STEP 1 — PROJECT SETUP
+--------------------------------------------------------------------------------
+
+  cd /Users/amitojsinghkohli/Documents/Self_Projects/card-fraud-intelligence
+
+  # Create virtual environment
+  python3 -m venv .venv
+  source .venv/bin/activate
+
+  # Install all dependencies
+  pip install -r requirements.txt
+
+
+--------------------------------------------------------------------------------
+STEP 2 — GET YOUR API KEY
+--------------------------------------------------------------------------------
+
+  Gemini API Key (free):
+  1. Go to https://aistudio.google.com
+  2. Click "Get API key" → "Create API key"
+  3. Copy the key — looks like AIzaSy...
+
+
+--------------------------------------------------------------------------------
+STEP 3 — CONFIGURE ENVIRONMENT
+--------------------------------------------------------------------------------
+
+  cp .env.example .env
+
+  Open .env and fill in:
+
+    MONGODB_URI=mongodb://localhost:27017
+    DB_NAME=card_fraud_intelligence
+    GEMINI_API_KEY=AIzaSy...              ← paste your key here
+    SECRET_KEY=pick-any-long-random-string-here
+    ALGORITHM=HS256
+    ACCESS_TOKEN_EXPIRE_MINUTES=60
+    MODEL_PATH=models/fraud_detector.pkl
+    SHAP_EXPLAINER_PATH=models/shap_explainer.pkl
+    FRAUD_THRESHOLD=0.5
+
+
+--------------------------------------------------------------------------------
+STEP 4 — START MONGODB
+--------------------------------------------------------------------------------
+
+  # Start MongoDB (macOS)
+  brew services start mongodb-community
+
+  # Verify it's running
+  mongosh --eval "db.adminCommand('ping')"
+  # Should print: { ok: 1 }
+
+
+--------------------------------------------------------------------------------
+STEP 5 — TRAIN THE MODEL (GOOGLE COLAB)
+--------------------------------------------------------------------------------
+
+  1. Upload the entire card-fraud-intelligence/ folder to Google Drive
+  2. Open notebooks/train_on_colab.ipynb
+     → right-click in Drive → Open with Colab
+  3. Runtime → Change runtime type → T4 GPU
+  4. Update cell 2: set PROJECT_PATH to your Drive folder path
+     e.g. PROJECT_PATH = '/content/drive/MyDrive/card-fraud-intelligence'
+  5. Runtime → Run all  (~10 minutes on GPU)
+  6. Download these two files from Drive to your local models/ folder:
+       models/fraud_detector.pkl
+       models/shap_explainer.pkl
+
+  NOTE: You can skip this step to test quickly.
+        The API still works without the model — it returns demo scores
+        so you can test all endpoints immediately.
+
+
+--------------------------------------------------------------------------------
+STEP 6 — START THE API
+--------------------------------------------------------------------------------
+
+  # Make sure .venv is active and you are in the project folder
+  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+  Expected output:
+    INFO | Connected to MongoDB at mongodb://localhost:27017
+    INFO | Fraud detection model loaded from models/fraud_detector.pkl
+    INFO | Gemini AI assistant initialised.
+    INFO | Card Fraud Intelligence API started.
+    INFO | Uvicorn running on http://0.0.0.0:8000
+
+  Open http://localhost:8000/docs in your browser.
+  This is the interactive Swagger UI — test every endpoint from here.
+
+
+--------------------------------------------------------------------------------
+STEP 7 — REGISTER & LOGIN
+--------------------------------------------------------------------------------
+
+  Register an analyst account:
+
+    curl -X POST http://localhost:8000/api/v1/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "username": "analyst1",
+        "email": "analyst1@bank.com",
+        "full_name": "Analyst One",
+        "password": "securepass123",
+        "role": "senior_analyst"
+      }'
+
+  Login and get your token:
+
+    curl -X POST http://localhost:8000/api/v1/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"username": "analyst1", "password": "securepass123"}'
+
+  Response:
+    {"access_token": "eyJhbGci...", "token_type": "bearer"}
+
+  Copy the access_token value.
+  Use it in all further requests as:
+    -H "Authorization: Bearer eyJhbGci..."
+
+
+--------------------------------------------------------------------------------
+STEP 8 — SCORE A TRANSACTION
+--------------------------------------------------------------------------------
+
+  curl -X POST http://localhost:8000/api/v1/transactions/score \
+    -H "Authorization: Bearer <your_token>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "transaction_id": "TXN-001",
+      "cardholder_id": "CH-0042",
+      "card_last4": "7823",
+      "card_type": "VISA",
+      "amount": 95000.00,
+      "merchant_id": "M-9912",
+      "merchant_name": "CryptoXchange Global",
+      "merchant_category_code": "6051",
+      "channel": "ONLINE",
+      "location_city": "Lagos",
+      "location_country": "NG",
+      "timestamp": "2025-06-29T02:34:00Z"
+    }'
+
+  Expected response:
+    {
+      "transaction_id": "TXN-001",
+      "fraud_probability": 0.9312,
+      "is_flagged": true,
+      "risk_level": "CRITICAL",
+      "fraud_explanation": "This transaction is highly suspicious...",
+      "top_risk_factors": [...],
+      "case_id": "a1b2c3d4-..."
+    }
+
+  Copy the case_id from the response for the next steps.
+
+
+--------------------------------------------------------------------------------
+STEP 9 — INVESTIGATE THE CASE
+--------------------------------------------------------------------------------
+
+  Get case details:
+
+    curl http://localhost:8000/api/v1/cases/<case_id> \
+      -H "Authorization: Bearer <your_token>"
+
+  Ask the AI about the case:
+
+    curl -X POST http://localhost:8000/api/v1/investigation/chat \
+      -H "Authorization: Bearer <your_token>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "case_id": "<case_id>",
+        "message": "Why is this suspicious and should I block the card?",
+        "conversation_history": []
+      }'
+
+  Get AI executive summary:
+
+    curl http://localhost:8000/api/v1/investigation/cases/<case_id>/summary \
+      -H "Authorization: Bearer <your_token>"
+
+  Update case status (confirm fraud or false positive):
+
+    curl -X PATCH http://localhost:8000/api/v1/cases/<case_id>/status \
+      -H "Authorization: Bearer <your_token>" \
+      -H "Content-Type: application/json" \
+      -d '{"status": "CONFIRMED_FRAUD", "reason": "Verified with cardholder"}'
+
+
+--------------------------------------------------------------------------------
+STEP 10 — VIEW ANALYTICS DASHBOARD
+--------------------------------------------------------------------------------
+
+  curl http://localhost:8000/api/v1/analytics/dashboard \
+    -H "Authorization: Bearer <your_token>"
+
+  curl http://localhost:8000/api/v1/analytics/trends?days=30 \
+    -H "Authorization: Bearer <your_token>"
+
+  curl http://localhost:8000/api/v1/analytics/by-merchant-category \
+    -H "Authorization: Bearer <your_token>"
+
+
+--------------------------------------------------------------------------------
+QUICK REFERENCE
+--------------------------------------------------------------------------------
+
+  URL                                      Purpose
+  ---------------------------------------  ----------------------------------
+  http://localhost:8000/docs               Swagger UI (interactive testing)
+  http://localhost:8000/health             Health check (no auth needed)
+  http://localhost:8000/api/v1/analytics/dashboard   KPI dashboard
+
+
+--------------------------------------------------------------------------------
+COMMON ISSUES
+--------------------------------------------------------------------------------
+
+  Problem                         Fix
+  ----------------------------    ----------------------------------------
+  Connection refused (MongoDB)    brew services start mongodb-community
+  GEMINI_API_KEY not set          Check .env — key should have no quotes
+  Model not found warning         Run Colab training or ignore (demo works)
+  401 Unauthorized                Token expired (60 min) — login again
+  ModuleNotFoundError             Run: source .venv/bin/activate
+
+
+================================================================================
+  END OF QUICKSTART
+================================================================================
