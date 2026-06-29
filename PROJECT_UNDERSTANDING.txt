@@ -51,7 +51,7 @@
   cardholder's account being taken over.
 
   Traditionally, banks have two ways to catch fraud:
-    a) Rule-based systems: "flag any transaction over ₹50,000 abroad"
+    a) Rule-based systems: "flag any transaction over $5,000 abroad"
        → Too many false alarms, misses clever fraud
     b) Human review teams: analysts manually check suspicious transactions
        → Too slow, too expensive, cannot scale
@@ -61,7 +61,7 @@
     STEP 1: Receives a transaction the moment it happens
     STEP 2: Scores it with a machine learning model (0% to 100% fraud probability)
     STEP 3: Uses Google Gemini AI to write a plain-English explanation of WHY
-            the model flagged it (e.g., "This ₹95,000 transfer to a Nigerian
+            the model flagged it (e.g., "This $95,000 transfer to a Nigerian
             crypto exchange at 2am is 4x this cardholder's normal spend")
     STEP 4: Creates a "fraud case" in a dashboard for the analyst team
     STEP 5: Lets analysts investigate the case via an AI chat assistant,
@@ -77,15 +77,16 @@
 
   SCALE OF THE PROBLEM
   --------------------
-  - India's card fraud losses exceeded ₹2,000 crore in FY2024
+  - US card fraud losses exceeded $12 billion in 2023
   - Globally, card fraud is a $33 billion annual problem
-  - Every card-issuing bank (HDFC, SBI, ICICI, Axis, Kotak) runs a fraud
-    operations team 24/7 to review flagged transactions
+  - Every card-issuing bank (JPMorgan Chase, Bank of America, Citi, Wells Fargo)
+    runs a fraud operations team 24/7 to review flagged transactions
 
   REGULATORY CONTEXT
   ------------------
-  - RBI mandates banks to file a Suspicious Transaction Report (STR) under
-    PMLA (Prevention of Money Laundering Act) for confirmed fraud above ₹10 lakh
+  - FinCEN (Financial Crimes Enforcement Network) requires banks to file a
+    Suspicious Activity Report (SAR) for transactions above $5,000 suspected
+    of fraud or $10,000 suspected of money laundering
   - Visa and Mastercard have chargeback reason codes that determine who bears
     the financial loss (issuing bank, acquiring bank, or merchant)
   - The AI chat assistant in this project specifically references these
@@ -104,7 +105,7 @@
     - How unusual is this amount compared to THIS cardholder's personal history?
     - How many transactions did this card make in the last hour?
     - Is this the first time this card has been used at this merchant?
-    - Did the card physically swipe in Mumbai 4 minutes after swiping in Delhi
+    - Did the card physically swipe in Los Angeles 4 minutes after swiping in New York
       (an impossible distance in that time)?
   Combining signals this way catches fraud that rules would miss entirely.
 
@@ -225,7 +226,7 @@
   The serving version is in:  app/core/feature_builder.py
 
   AMOUNT FEATURES:
-    amount                    — Raw transaction amount in INR
+    amount                    — Raw transaction amount in USD
     amount_zscore             — (amount - cardholder_avg) / cardholder_std
                                 How many standard deviations above their
                                 normal spending is this transaction?
@@ -261,7 +262,7 @@
                                   any commercial flight). Catches cases
                                   where a stolen card is used simultaneously
                                   in two different cities.
-    is_international           — 1 if location_country != "IN".
+    is_international           — 1 if location_country != "US".
     is_new_country             — 1 if cardholder has never transacted in
                                   this country before (in 30-day history).
     is_high_risk_country       — 1 if country is in a hardcoded high-risk
@@ -384,7 +385,7 @@
   is given structured context (transaction data, SHAP values, case history)
   and asked to produce a specific type of output.
 
-  Model used: gemini-2.0-flash
+  Model used: gemini-2.5-flash
   Why Flash (not Pro/Ultra)? Speed and cost.
     - Fraud explanation needs to happen in near real-time
     - Flash gives good quality for structured explanation tasks
@@ -409,7 +410,7 @@
       is_night:             +0.12
 
     Output Gemini explanation:
-      "This transaction is highly suspicious: a ₹95,000 transfer to a
+      "This transaction is highly suspicious: a $95,000 transfer to a
       crypto exchange in Lagos at 2am is far outside this cardholder's
       typical spending pattern. The merchant category (crypto/wire
       transfer) and the destination country (Nigeria) are both associated
@@ -445,12 +446,12 @@
               level, immediate card blocking is recommended. Issue a
               replacement card to the cardholder. If the cardholder
               confirms they did not authorize this transaction, initiate
-              a chargeback request. Since the amount exceeds ₹10 lakhs,
-              a Suspicious Transaction Report must be filed with FIU-IND
-              within 7 working days under PMLA."
+              a chargeback request. Since the amount exceeds $10,000,
+              a Suspicious Activity Report (SAR) must be filed with
+              FinCEN within 30 days under the Bank Secrecy Act."
 
   Suggested actions (auto-generated based on risk level):
-    CRITICAL (>85%): Block card · Initiate CBR · File STR · Notify cardholder
+    CRITICAL (>85%): Block card · Initiate CBR · File SAR · Notify cardholder
     HIGH (65-85%):   Temporary hold · Review 30-day history
 
 
@@ -559,16 +560,23 @@
     POST   /api/v1/cases/{id}/notes    — add investigation note
     PATCH  /api/v1/cases/{id}/assign   — assign to an analyst
 
-  7d. ANALYTICS ENDPOINTS
+  7d. ADMIN ENDPOINT
+  -------------------
+  DELETE /api/v1/admin/reset-db
+    Drops all four collections (transactions, fraud_cases, users, audit_log).
+    Used for resetting the database to a clean state during demos.
+    Returns { "status": "ok", "dropped": [...] }.
+
+  7e. ANALYTICS ENDPOINTS
   ------------------------
-  GET /api/v1/analytics/dashboard
+  GET  /api/v1/analytics/dashboard
     Returns aggregate KPIs using MongoDB $group aggregations:
     - total_transactions_scored
     - total_flagged, flag_rate_percent
     - total_cases, open_cases, critical_cases
     - confirmed_fraud_cases, false_positive_cases
     - detection_rate_percent, false_positive_rate_percent
-    - total_confirmed_fraud_amount_inr
+    - total_confirmed_fraud_amount_usd
 
   GET /api/v1/analytics/trends?days=30
     Daily breakdown of cases for the past N days.
@@ -694,7 +702,7 @@
   The portfolio showpiece. Two columns:
 
   LEFT — Transaction form:
-    Pre-filled with a suspicious example (₹95,000 to Nigerian crypto
+    Pre-filled with a suspicious example ($95,000 to Nigerian crypto
     exchange at 2am). "Load Suspicious" and "Load Legitimate" buttons
     let visitors instantly switch between scenarios.
     Fields: amount, cardholder_id, merchant, MCC, channel, card type,
@@ -832,7 +840,7 @@
              │
   ┌──────────▼────────────────────┐
   │  Google Gemini API            │
-  │  gemini-2.0-flash             │
+  │  gemini-2.5-flash             │
   │  Called per fraud explanation │
   └───────────────────────────────┘
 
@@ -1093,11 +1101,11 @@
     back from the merchant's bank (acquirer). Visa/Mastercard reason codes
     determine who bears the loss.
 
-  STR (Suspicious Transaction Report)
-    A mandatory report filed with FIU-IND (Financial Intelligence Unit
-    — India) under PMLA (Prevention of Money Laundering Act, 2002).
-    Required for: confirmed fraud above ₹10 lakhs, or any transaction
-    suggesting money laundering. Must be filed within 7 working days.
+  SAR (Suspicious Activity Report)
+    A mandatory report filed with FinCEN (Financial Crimes Enforcement
+    Network) under the Bank Secrecy Act (BSA). Required for transactions
+    above $5,000 suspected of fraud, or above $10,000 suspected of money
+    laundering. Must be filed within 30 days of detection.
 
   AUC-ROC (Area Under the Receiver Operating Characteristic Curve)
     A measure of a fraud model's ability to distinguish fraud from
@@ -1113,13 +1121,14 @@
     A fraudulent transaction that was NOT flagged (missed fraud).
     Each false negative = direct financial loss to the bank or cardholder.
 
-  PMLA
-    Prevention of Money Laundering Act, 2002. Indian law requiring banks
-    to file STRs and maintain transaction records for 5 years.
+  BSA (Bank Secrecy Act)
+    US federal law (1970) requiring financial institutions to file SARs,
+    maintain transaction records for 5 years, and report cash transactions
+    over $10,000 (CTRs). Enforced by FinCEN.
 
-  FIU-IND
-    Financial Intelligence Unit — India. The government body that
-    receives STRs from banks and investigates financial crimes.
+  FinCEN (Financial Crimes Enforcement Network)
+    US Treasury bureau that receives SARs from banks and coordinates
+    with law enforcement to investigate financial crimes.
 
   Velocity (in fraud context)
     The number of transactions made by a card in a short time window.
