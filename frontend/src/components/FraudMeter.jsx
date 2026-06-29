@@ -47,7 +47,7 @@ export default function FraudMeter({ score = 0 }) {
           fill="none"
           stroke="#e2e8f0"
           strokeWidth="14"
-          strokeLinecap="round"
+          strokeLinecap="butt"
         />
         {/* Progress arc */}
         <path
@@ -55,7 +55,7 @@ export default function FraudMeter({ score = 0 }) {
           fill="none"
           stroke={color}
           strokeWidth="14"
-          strokeLinecap="round"
+          strokeLinecap="butt"
           strokeDasharray={dash}
           className="gauge-arc"
         />

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ChevronLeft, Send, RefreshCw, MessageSquare, StickyNote, Settings2 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import client from '../api/client'
 import FraudMeter from '../components/FraudMeter'
 import ShapChart from '../components/ShapChart'
@@ -183,7 +184,17 @@ export default function CaseDetail() {
                       ? 'bg-blue-600 text-white rounded-br-none'
                       : 'bg-slate-100 text-slate-700 rounded-bl-none'
                   }`}>
-                    {m.content}
+                    {m.role === 'analyst' ? m.content : (
+                      <ReactMarkdown
+                        components={{
+                          p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                          ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 mt-1">{children}</ol>,
+                          ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 mt-1">{children}</ul>,
+                          li: ({ children }) => <li>{children}</li>,
+                        }}
+                      >{m.content}</ReactMarkdown>
+                    )}
                   </div>
                 </div>
               ))}
