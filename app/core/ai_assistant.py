@@ -13,7 +13,7 @@ def init_gemini() -> None:
         logger.warning("GEMINI_API_KEY not set. AI explanations will be unavailable.")
         return
     genai.configure(api_key=settings.GEMINI_API_KEY)
-    _model = genai.GenerativeModel("gemini-2.0-flash")
+    _model = genai.GenerativeModel("gemini-2.5-flash")
     logger.info("Gemini AI assistant initialised.")
 
 

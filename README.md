@@ -29,7 +29,7 @@ graph TD
         M2["🔍 SHAP TreeExplainer\ntop_risk_factors"]
     end
 
-    subgraph AI["AI Layer  —  Google Gemini 2.0 Flash"]
+    subgraph AI["AI Layer  —  Google Gemini 2.5 Flash"]
         A1["📝 Fraud Explanation\nSHAP → plain English"]
         A2["💬 Investigation Chat\nCase-aware assistant"]
         A3["📄 Case Summary\nExecutive brief + red flags"]
@@ -92,7 +92,7 @@ flowchart LR
 - **Risk signals**: high-risk MCC codes (Crypto/Wire, Gambling, Money Transfer), new merchant, international flag
 - **SHAP explainability**: every prediction returns top risk factors with directional impact scores
 
-### AI Layer (Google Gemini 2.0 Flash)
+### AI Layer (Google Gemini 2.5 Flash)
 - **Fraud Explanation**: translates SHAP values into plain-English analyst-ready summaries
 - **Investigation Chat**: conversational assistant with full case context and banking procedure awareness
 - **Case Summary**: AI-generated executive brief with red flags list and recommended action
@@ -249,7 +249,7 @@ curl -X POST http://localhost:8000/api/v1/transactions/score \
 | ML Model | XGBoost 3.x |
 | Explainability | SHAP (TreeExplainer) |
 | Class Imbalance | scale_pos_weight + SMOTE |
-| AI / LLM | Google Gemini 2.0 Flash |
+| AI / LLM | Google Gemini 2.5 Flash |
 | Database | MongoDB Atlas (async via Motor) |
 | Authentication | JWT (python-jose + passlib bcrypt) |
 | Frontend | React 18 + Vite + Tailwind CSS |
