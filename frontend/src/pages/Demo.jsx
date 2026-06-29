@@ -165,13 +165,18 @@ export default function Demo() {
       </div>
 
       {/* Preset buttons */}
-      <div className="flex gap-3 mb-6">
-        <button onClick={loadSuspicious} className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg border border-red-200 transition-colors">
-          <AlertTriangle size={14} /> Load Suspicious Example
-        </button>
-        <button onClick={loadLegit} className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-semibold rounded-lg border border-green-200 transition-colors">
-          <CheckCircle size={14} /> Load Legitimate Example
-        </button>
+      <div className="flex flex-col gap-2 mb-6">
+        <div className="flex gap-3">
+          <button onClick={loadSuspicious} className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg border border-red-200 transition-colors">
+            <AlertTriangle size={14} /> Load Suspicious Example
+          </button>
+          <button onClick={loadLegit} className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-semibold rounded-lg border border-green-200 transition-colors">
+            <CheckCircle size={14} /> Load Legitimate Example
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 flex items-center gap-1">
+          <RefreshCw size={11} /> Click again to get a different random sample
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
