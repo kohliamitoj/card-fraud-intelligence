@@ -6,57 +6,82 @@ import FraudMeter from '../components/FraudMeter'
 import ShapChart from '../components/ShapChart'
 import RiskBadge from '../components/RiskBadge'
 
-const SUSPICIOUS = {
-  transaction_id: `TXN-${Date.now()}`,
-  cardholder_id: 'CH-0042',
-  card_last4: '7823',
-  card_type: 'VISA',
-  amount: 95000,
-  currency: 'USD',
-  merchant_id: 'M-9912',
-  merchant_name: 'CryptoXchange Global',
-  merchant_category_code: '6051',
-  channel: 'ONLINE',
-  location_city: 'Lagos',
-  location_country: 'NG',
-  timestamp: new Date().toISOString(),
+const SUSPICIOUS_POOL = [
+  { merchant_name: 'CryptoXchange Global',   merchant_category_code: '6051', amount: 95000, location_city: 'Lagos',      location_country: 'NG', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'BitVault Exchange',       merchant_category_code: '6051', amount: 48500, location_city: 'Bucharest',  location_country: 'RO', channel: 'ONLINE',      card_type: 'MASTERCARD' },
+  { merchant_name: 'Lucky Spin Casino',       merchant_category_code: '7995', amount: 22000, location_city: 'Macau',      location_country: 'MO', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'FastWire Transfer Co.',   merchant_category_code: '4829', amount: 67000, location_city: 'Dubai',      location_country: 'AE', channel: 'ONLINE',      card_type: 'AMEX'       },
+  { merchant_name: 'GlobalBet Online',        merchant_category_code: '7995', amount: 15800, location_city: 'Kiev',       location_country: 'UA', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'CoinFlow Markets',        merchant_category_code: '6051', amount: 130000,location_city: 'Moscow',     location_country: 'RU', channel: 'ONLINE',      card_type: 'MASTERCARD' },
+  { merchant_name: 'MoneyGo Remittance',      merchant_category_code: '4829', amount: 41000, location_city: 'Nairobi',   location_country: 'KE', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'PlayJackpot Pro',         merchant_category_code: '7995', amount: 9500,  location_city: 'Valletta',   location_country: 'MT', channel: 'ONLINE',      card_type: 'AMEX'       },
+  { merchant_name: 'CryptoNest Exchange',     merchant_category_code: '6051', amount: 73000, location_city: 'Tbilisi',   location_country: 'GE', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'SwiftCash Wiring',        merchant_category_code: '4829', amount: 55000, location_city: 'Karachi',   location_country: 'PK', channel: 'ONLINE',      card_type: 'MASTERCARD' },
+]
+
+const LEGIT_POOL = [
+  { merchant_name: 'Whole Foods Market',      merchant_category_code: '5411', amount: 142,   location_city: 'Austin',     location_country: 'US', channel: 'POS',         card_type: 'VISA'       },
+  { merchant_name: 'Shell Gas Station',       merchant_category_code: '5541', amount: 68,    location_city: 'Chicago',    location_country: 'US', channel: 'CONTACTLESS', card_type: 'MASTERCARD' },
+  { merchant_name: 'Starbucks Coffee',        merchant_category_code: '5812', amount: 12,    location_city: 'Seattle',    location_country: 'US', channel: 'CONTACTLESS', card_type: 'VISA'       },
+  { merchant_name: 'Target Store',            merchant_category_code: '5310', amount: 310,   location_city: 'Dallas',     location_country: 'US', channel: 'POS',         card_type: 'MASTERCARD' },
+  { merchant_name: 'Amazon.com',              merchant_category_code: '5999', amount: 89,    location_city: 'New York',   location_country: 'US', channel: 'ONLINE',      card_type: 'VISA'       },
+  { merchant_name: 'Trader Joe\'s',           merchant_category_code: '5411', amount: 95,    location_city: 'San Francisco', location_country: 'US', channel: 'POS',      card_type: 'AMEX'       },
+  { merchant_name: 'CVS Pharmacy',            merchant_category_code: '5912', amount: 37,    location_city: 'Boston',     location_country: 'US', channel: 'CONTACTLESS', card_type: 'MASTERCARD' },
+  { merchant_name: 'Home Depot',              merchant_category_code: '5200', amount: 245,   location_city: 'Phoenix',    location_country: 'US', channel: 'POS',         card_type: 'VISA'       },
+  { merchant_name: 'Chipotle Mexican Grill',  merchant_category_code: '5812', amount: 18,    location_city: 'Denver',     location_country: 'US', channel: 'ONLINE',      card_type: 'MASTERCARD' },
+  { merchant_name: 'Costco Wholesale',        merchant_category_code: '5411', amount: 520,   location_city: 'Portland',   location_country: 'US', channel: 'POS',         card_type: 'VISA'       },
+]
+
+function randomFrom(pool) {
+  return pool[Math.floor(Math.random() * pool.length)]
 }
 
-const LEGIT = {
-  transaction_id: `TXN-${Date.now() + 1}`,
-  cardholder_id: 'CH-0108',
-  card_last4: '4421',
-  card_type: 'MASTERCARD',
-  amount: 1250,
-  currency: 'USD',
-  merchant_id: 'M-0022',
-  merchant_name: 'Big Bazaar Mumbai',
-  merchant_category_code: '5411',
-  channel: 'POS',
-  location_city: 'Mumbai',
-  location_country: 'IN',
-  timestamp: new Date().toISOString(),
+function buildPreset(base) {
+  const cardholderNum = String(Math.floor(Math.random() * 9000) + 1000)
+  const merchantNum   = String(Math.floor(Math.random() * 9000) + 1000)
+  const last4         = String(Math.floor(Math.random() * 9000) + 1000)
+  return {
+    transaction_id: `TXN-${Date.now()}`,
+    cardholder_id: `CH-${cardholderNum}`,
+    card_last4: last4,
+    card_type: base.card_type,
+    amount: base.amount,
+    currency: 'USD',
+    merchant_id: `M-${merchantNum}`,
+    merchant_name: base.merchant_name,
+    merchant_category_code: base.merchant_category_code,
+    channel: base.channel,
+    location_city: base.location_city,
+    location_country: base.location_country,
+    timestamp: new Date().toISOString(),
+  }
 }
 
 const FIELDS = [
-  { key: 'amount',                label: 'Amount (USD)',       type: 'number' },
-  { key: 'cardholder_id',         label: 'Cardholder ID',      type: 'text' },
-  { key: 'merchant_name',         label: 'Merchant Name',      type: 'text' },
-  { key: 'merchant_category_code',label: 'MCC Code',           type: 'text' },
-  { key: 'channel',               label: 'Channel',            type: 'select', options: ['POS', 'ONLINE', 'ATM', 'CONTACTLESS'] },
-  { key: 'card_type',             label: 'Card Type',          type: 'select', options: ['VISA', 'MASTERCARD', 'AMEX', 'RUPAY'] },
-  { key: 'location_city',         label: 'City',               type: 'text' },
-  { key: 'location_country',      label: 'Country Code',       type: 'text' },
+  { key: 'amount',                label: 'Amount (USD)',  type: 'number' },
+  { key: 'cardholder_id',         label: 'Cardholder ID', type: 'text' },
+  { key: 'merchant_name',         label: 'Merchant Name', type: 'text' },
+  { key: 'merchant_category_code',label: 'MCC Code',      type: 'text' },
+  { key: 'channel',               label: 'Channel',       type: 'select', options: ['POS', 'ONLINE', 'ATM', 'CONTACTLESS'] },
+  { key: 'card_type',             label: 'Card Type',     type: 'select', options: ['VISA', 'MASTERCARD', 'AMEX', 'RUPAY'] },
+  { key: 'location_city',         label: 'City',          type: 'text' },
+  { key: 'location_country',      label: 'Country Code',  type: 'text' },
 ]
 
 export default function Demo() {
-  const [form, setForm]       = useState(SUSPICIOUS)
+  const [form, setForm]       = useState(() => buildPreset(randomFrom(SUSPICIOUS_POOL)))
   const [result, setResult]   = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
 
-  function loadPreset(preset) {
-    setForm({ ...preset, transaction_id: `TXN-${Date.now()}` })
+  function loadSuspicious() {
+    setForm(buildPreset(randomFrom(SUSPICIOUS_POOL)))
+    setResult(null)
+    setError('')
+  }
+
+  function loadLegit() {
+    setForm(buildPreset(randomFrom(LEGIT_POOL)))
     setResult(null)
     setError('')
   }
@@ -87,15 +112,14 @@ export default function Demo() {
           <h1 className="text-2xl font-bold text-slate-900">Live Fraud Detection Demo</h1>
           <span className="ml-2 text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">● LIVE</span>
         </div>
-        <p className="text-slate-500 text-sm">Submit a card transaction and see the XGBoost + Gemini AI analysis in real time.</p>
       </div>
 
       {/* Preset buttons */}
       <div className="flex gap-3 mb-6">
-        <button onClick={() => loadPreset(SUSPICIOUS)} className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg border border-red-200 transition-colors">
+        <button onClick={loadSuspicious} className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg border border-red-200 transition-colors">
           <AlertTriangle size={14} /> Load Suspicious Example
         </button>
-        <button onClick={() => loadPreset(LEGIT)} className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-semibold rounded-lg border border-green-200 transition-colors">
+        <button onClick={loadLegit} className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-semibold rounded-lg border border-green-200 transition-colors">
           <CheckCircle size={14} /> Load Legitimate Example
         </button>
       </div>
@@ -150,7 +174,7 @@ export default function Demo() {
                 <Zap size={24} className="text-slate-300" />
               </div>
               <p className="text-slate-400 text-sm font-medium">Results will appear here</p>
-              <p className="text-slate-300 text-xs mt-1">Submit a transaction to see AI-powered fraud analysis</p>
+              <p className="text-slate-300 text-xs mt-1">Submit a transaction to see fraud analysis</p>
             </div>
           )}
 
@@ -158,7 +182,6 @@ export default function Demo() {
             <div className="card p-10 flex flex-col items-center justify-center min-h-64">
               <RefreshCw size={28} className="text-blue-500 animate-spin mb-3" />
               <p className="text-slate-500 text-sm font-medium">Analysing transaction…</p>
-              <p className="text-slate-300 text-xs mt-1">Running ML model + Gemini AI</p>
             </div>
           )}
 
@@ -177,9 +200,9 @@ export default function Demo() {
                 </div>
               </div>
 
-              {/* AI Explanation */}
+              {/* Explanation */}
               <div className="card p-5">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">AI Explanation</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Explanation</p>
                 <p className="text-sm text-slate-700 leading-relaxed">{result.fraud_explanation}</p>
               </div>
 

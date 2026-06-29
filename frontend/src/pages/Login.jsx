@@ -94,7 +94,7 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">
-          Built with XGBoost + SHAP + Google Gemini AI
+          Built with XGBoost + SHAP + AI
         </p>
       </div>
     </div>
